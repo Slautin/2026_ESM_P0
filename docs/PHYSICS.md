@@ -219,6 +219,11 @@ Checks reported:
   reported twice, a readout that differs from the convention, or shared
   scales (a, eta, U_dc, R_D) that differ between reports or from the
   detector's own a.
+- Unsupported, with no numbers: a mechanism that has data but was refused by
+  its own checks (it keeps its failed checks), for example Vegard outside its
+  bias window. It applies to this sample, so a sum without it would be
+  incomplete. A mechanism without data (no block, no failed checks) is only
+  omitted, and the rest is summed.
 - Approximate: one flag per approximate mechanism, so the detector is never
   better than what it sums.
 - Notes: k_c / k_l, h omega / omega_cr and whether a harmonic sits inside the
@@ -245,8 +250,13 @@ resonance and an order-of-magnitude C_g.
   (electrostriction and electrostatic), with `valid` and `approximate`
   points marked.
 
-Not yet shown: a V_dc sweep through the CPD, and uncertainty bands from the
-card distributions.
+`notebooks/02_forward_uncertainty.ipynb` adds Monte Carlo bands (section 9).
+It compares an exact interface with an uncertain ambient one (residual CPD and
+a water layer, `examples.ambient_junction`). It also shows which of the eight
+uncertain parameters sets the band at each frequency, and a relaxation in
+which the Vegard share recovers while the electrostatic force dominates the
+total at the resonance.
+Not yet shown: a V_dc sweep through the CPD.
 
 ## 8. Occupancy state after a DC pulse (`material_state/occupancy.py`)
 
@@ -301,3 +311,78 @@ pulses go to 0 and 1); recovery equal to 1 at delay 0 and to 2^(-3/2) at
 delay = tau; on-field Vegard ratio theta (1 minus theta) / (theta_0 (1 minus
 theta_0)) at high frequency; unsupported without a site density; the detector
 inherits an unsupported state.
+
+## 9. Forward uncertainty (`Param.draw`, `Card.draw` in `esm_p00/cards.py`)
+
+Monte Carlo, forward only. `card.draw(rng)` rebuilds a card with every
+uncertain Param redrawn independently from its own distribution, centred as
+the card defines it:
+- normal: value + sigma z;
+- lognormal: value exp(sigma_ln z);
+- uniform: value + half_width u, with z ~ N(0, 1) and u ~ U(-1, 1).
+
+Fixed Params and plain numbers pass through unchanged, so the control settings
+in the experiment and pulse cards are exact. `only={...}` redraws only the
+named fields, and every other Param keeps its card value.
+
+`card.draw(mean=True)` puts every distribution at its mean instead. That is
+`value` for normal and uniform, and value exp(sigma_ln^2 / 2) for lognormal,
+which is above the median `value`. The mean card is not the mean prediction,
+because the model is nonlinear.
+
+The card is rebuilt through its constructor, so its validators decide the
+physical support. A draw outside it (eps_r below 1, N at or above N_site, nu
+outside (-1, 0.5), a negative length) raises ValueError. The caller drops and
+counts that draw; it is never clipped. The effective prior is the card
+distribution truncated to the support.
+
+The caller runs the same P0 chain (the LangGraph graph) on every drawn card set
+and reports percentile bands. Unsupported points are NaN, never zero.
+
+The backward path, a particle filter on these same draws, is section 10.
+
+## 10. Backward: particle filter (`esm_p00/particles.py`)
+
+A resample-move particle filter (iterated batch importance sampling, Chopin,
+Biometrika 89, 539 (2002)) over the uncertain card values.
+
+- **Particles.** Each particle is a card set. It also carries its prior-width
+  coordinates z, from `card.at(z)`: value + sigma z (normal), value
+  exp(sigma_ln z) (lognormal), value + half_width z (uniform). The prior is
+  N(0, 1) per coordinate, or U(-1, 1) for a uniform.
+- **Weight.** The observed points are taken in one at a time. Each particle's
+  weight is multiplied by the likelihood of the new point. The notebook
+  supplies that likelihood by running the graph: Gaussian on ln|1w| with the
+  measurement noise, and zero when the prediction is unsupported.
+- **Resample** (systematic) when the effective number of particles,
+  1 / sum(w^2), falls below N/2.
+- **Move.** Metropolis steps in z. The jump is scaled by the cloud's own
+  covariance times 2.38 / sqrt(d). It is accepted against the prior and the
+  likelihood of all points seen so far. A proposal outside the physical support
+  (a card validator raises) is rejected.
+- **If no particle explains a point**, the filter stops with an error rather
+  than return a result.
+- **Result.** `updated_cards` writes the posterior back as ordinary cards: each
+  Param re-centred and re-scaled from the weighted particles, with normal and
+  lognormal keeping their family. The correlations, which cards cannot hold,
+  are returned beside them.
+
+Moves along single parameters (scaled per parameter) were tried and rejected.
+On the ridges the data leave, for example eps_r with beta_33 from a sweep,
+they collapse the cloud and give intervals that are too narrow. Covariance
+moves were checked against an independent Metropolis chain. Fresh synthetic
+truths fell inside the 90 % intervals 91-92 % of the time.
+
+The filter works on any list of operating points: one point, a few chosen
+frequencies, a spectrum, pulse delays, or a mix of experiments. A single point
+constrains one combination of parameters.
+
+Limits:
+- In `notebooks/03_backward_particle_filter.ipynb` the data come from the same
+  model, so recovery is optimistic.
+- Real data will need `detector_factor` as a Param and a model-error term for
+  approximate points.
+
+Tests: `Card.at(z = 0)` is the card; `draw` is unchanged for a fixed seed;
+systematic resampling keeps N; a flat likelihood leaves the prior; the
+posterior agrees with an independent Metropolis chain on a small case.

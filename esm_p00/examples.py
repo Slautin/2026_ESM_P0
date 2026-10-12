@@ -6,11 +6,11 @@ sigma_ln of 0.7 is about a factor of two, 1.0 is about a factor of three. Formul
 only the nominal values.
 
 LiCoO2 follows the oracle fixture (2026_ESM_oracle/esm_oracle/sample/examples.py).
-The polar dielectric and the probe are illustrative, not a specific material or tip.
+The polar dielectric, the probe and the ambient junction are illustrative.
 """
 from __future__ import annotations
 
-from esm_p00.cards import (ElectrostrictionBlock, InstrumentCard, IonicBlock, MaterialCard, Param,
+from esm_p00.cards import (ElectrostrictionBlock, InstrumentCard, IonicBlock, JunctionCard, MaterialCard, Param,
                            PiezoBlock)
 
 # LiCoO2 sources
@@ -45,7 +45,8 @@ def licoo2(state_of_charge: float = 0.5) -> MaterialCard:
             diffusivity=Param(value=1e-16, dist="lognormal", dist_params={"sigma_ln": 1.0}),
             diffusivity_kind="self",                                                       # tracer, 293 K
             vegard_11=0.004 / LICOO2_SITE_DENSITY,                                         # m^3 per ion
-            vegard_33=-0.045 / LICOO2_SITE_DENSITY,
+            vegard_33=Param(value=-0.045 / LICOO2_SITE_DENSITY, dist="normal",          # endpoint slope,
+                            dist_params={"sigma": 0.3 * 0.045 / LICOO2_SITE_DENSITY}),     # +-30 %
         ),
     )
 
@@ -70,7 +71,22 @@ def afm_probe() -> InstrumentCard:
         tip_young_modulus_pa=169e9,                   # Si
         tip_poisson_ratio=0.27,
         cantilever_stiffness_n_m=3.0,
-        contact_resonance_hz=320e3,                   # would be measured on the sample
-        contact_quality_factor=80.0,
-        capacitance_gradient_f_m=1e-9,                # order of magnitude for tip plus lever; not a calibration
+        contact_resonance_hz=350e3,                   # would be measured on the sample
+        contact_quality_factor=120.0,
+        capacitance_gradient_f_m=Param(value=1e-9, dist="lognormal",       # order of magnitude for tip plus
+                                       dist_params={"sigma_ln": 1.0}),     # lever; not a calibration
+    )
+
+
+def ambient_junction() -> JunctionCard:
+    """Illustrative contact in ambient air: a residual CPD after compensation and a thin water layer.
+
+    V_cpd is the residual after the DC bias compensates a measured CPD, 0 +- 20 mV. The water
+    layer is about half a nanometre thick (factor of 1.6) with a confined, poorly known
+    permittivity of 2 to 18. Its presence is fixed; only its values are uncertain.
+    """
+    return JunctionCard(
+        v_cpd_v=Param(value=0.0, dist="normal", dist_params={"sigma": 0.02}),
+        surface_layer_thickness_m=Param(value=0.5e-9, dist="lognormal", dist_params={"sigma_ln": 0.5}),
+        surface_layer_relative_permittivity=Param(value=10.0, dist="uniform", dist_params={"half_width": 8.0}),
     )

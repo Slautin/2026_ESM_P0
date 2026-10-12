@@ -6,7 +6,7 @@ MODULES = [
     "esm_p00.report", "esm_p00.state", "esm_p00.detector",
     "esm_p00.mechanisms.vegard", "esm_p00.mechanisms.piezoresponse",
     "esm_p00.mechanisms.electrostriction", "esm_p00.mechanisms.electrostatic",
-    "esm_p00.protocols", "esm_p00.examples", "material_state", "material_state.occupancy",
+    "esm_p00.protocols", "esm_p00.examples", "esm_p00.particles", "material_state", "material_state.occupancy",
 ]
 
 

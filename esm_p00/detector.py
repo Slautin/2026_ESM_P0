@@ -9,10 +9,12 @@ contact-resonance mode shared by both inputs, photodiode reads the lever)
 The 2w channel is evaluated at 2 omega. Attraction (F < 0) pulls the tip toward the
 sample. With detector_factor = 1.0 the signal is the tip deflection in metres.
 
-This is the only place where mechanisms meet. Unsupported mechanisms are listed as
-omitted, never counted as zero. The detector refuses to sum reports whose readouts or
-shared scales differ, and it is never better than the mechanisms it sums, nor than the
-state step (material_state) that prepared their card, when there is one.
+This is the only place where mechanisms meet. A mechanism without data (no block on the
+card) is listed as omitted, never counted as zero, and the rest is summed. A mechanism
+that has data but was refused by its own checks applies to this sample, so a sum without
+it would be incomplete: the detector is then unsupported. It also refuses reports whose
+readouts or shared scales differ, and it is never better than the mechanisms it sums, nor
+than the state step (material_state) that prepared their card, when there is one.
 
 Reference: two-springs and contact-resonance model of the oracle detection stage
 (esm_oracle/physics/detection.py); docs/PHYSICS.md section 6.
@@ -61,6 +63,7 @@ def compute(reports: list[MechanismReport], material: MaterialCard, experiment: 
     # ---------------------------------------------------------- 1. inputs and checks
     included = [r for r in reports if r.is_supported]
     omitted = [r.mechanism for r in reports if not r.is_supported]
+    refused = [r.mechanism for r in reports if not r.is_supported and r.failed_checks]   # data, but outside validity
     names = [r.mechanism for r in included]
 
     e_star = reduced_modulus(y_sample=material.youngs_modulus.value, nu_sample=material.poisson_ratio.value,
@@ -86,6 +89,8 @@ def compute(reports: list[MechanismReport], material: MaterialCard, experiment: 
     checks = [
         Check.flag("any_supported", ok=bool(included), on_fail="unsupported",
                    note="no supported mechanism: nothing to sum"),
+        Check.flag("none_refused", ok=not refused, on_fail="unsupported",
+                   note=f"{', '.join(refused)} applies but is outside its validity: the sum would be incomplete"),
         Check.flag("unique_mechanisms", ok=len(set(names)) == len(names), on_fail="unsupported",
                    note="a mechanism was reported more than once"),
         Check.flag("readout_consistent", ok=not misread, on_fail="unsupported",

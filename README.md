@@ -24,7 +24,9 @@ repository takes the formulas of that P00 layer and nothing else.
 ```
 esm_p00/
   constants.py        e, k_B, eps_0
-  cards.py            Param plus MaterialCard, ExperimentCard, InstrumentCard, JunctionCard, PulseCard
+  cards.py            Param plus MaterialCard, ExperimentCard, InstrumentCard, JunctionCard, PulseCard;
+                      card.draw(rng) samples the uncertain values, card.draw(mean=True) their means,
+                      card.at(z) places them at prior-width coordinates
   scales.py           pure functions: Hertz contact, Debye scales, voltage divider,
                       junction voltage, point-charge depth, sphere capacitance gradient
   report.py           Check, MechanismReport, StateReport, DetectorReport; harmonic keys, status order,
@@ -33,12 +35,18 @@ esm_p00/
   detector.py         two springs, contact-resonance oscillator, detector factor
   protocols.py        Step, SingleFrequency, FrequencySweep, PulseReadout: experiments as lists of
                       operating points
-  examples.py         demo cards with sources: LiCoO2, illustrative polar dielectric, AFM probe
+  particles.py        resample-move particle filter over the uncertain card values; updated cards
+  examples.py         demo cards with sources: LiCoO2, illustrative polar dielectric, AFM probe,
+                      ambient junction (residual CPD, water layer)
   state.py            PointState: the TypedDict for the optional LangGraph graph
 material_state/       DC state steps run before the mechanisms: occupancy (lattice gas,
                       diffusive recovery after a pulse)
 notebooks/            01_forward_p00.ipynb: the LangGraph graph, a frequency sweep, a pulse relaxation,
                       linear and quadratic channels
+                      02_forward_uncertainty.ipynb: Monte Carlo bands with an uncertain interface,
+                      which parameter matters where
+                      03_backward_particle_filter.ipynb: a synthetic truth, a sweep, the filter,
+                      updated prediction and parameter distributions
 docs/                 PHYSICS.md (formulas), CONVENTIONS.md (compatibility table)
 tests/                one file per module: a known limit and a sign check
 ```
@@ -64,7 +72,8 @@ tests/                one file per module: a known limit and a sign check
 
 Cards, scales, reports, the four mechanisms, the detector, the occupancy state step and the protocols
 (single frequency, frequency sweep, pulse readout) are implemented, all closed-form, together with the
-LangGraph state (`PointState`), the demo cards and the demonstration notebook. Only the import smoke test exists; the per-module tests are placeholders.
+LangGraph state (`PointState`), the demo cards, forward Monte Carlo uncertainty, the backward particle
+filter and the three notebooks. Only the import smoke test exists; the per-module tests are placeholders.
 Physics and conventions are written in `docs/`. See `ORACLE_P00_REVIEW.md` for the context and the
 decisions taken.
 

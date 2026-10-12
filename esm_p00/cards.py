@@ -15,6 +15,14 @@ unsupported. Absence is never a zero.
 A bare number is accepted wherever a Param is expected, so a card can be
 written as `eps_r=10.0` or as `eps_r=Param(value=10.0, dist="normal",
 dist_params={"sigma": 3.0})`.
+
+Uncertainty: `card.draw(rng)` returns the card with every Param that has a
+distribution redrawn from it; fixed Params and plain numbers pass through
+unchanged. `card.draw(mean=True)` puts each distribution at its mean instead.
+`card.at(z)` places the uncertain values at chosen prior-width coordinates z
+(z = 0 is the card value); the particle filter works in z.
+The card is rebuilt through its constructor, so the validators decide the
+physical support: a draw outside it raises ValueError and is never clipped.
 """
 from __future__ import annotations
 
@@ -72,6 +80,76 @@ class Param(BaseModel):
             raise ValueError("a lognormal Param needs a positive value")
         return self
 
+    def draw(self, rng=None, mean: bool = False) -> "Param":
+        """The same Param with a new value: sampled from its distribution, or its mean.
+
+        A sample is the Param at a random prior-width coordinate (N(0, 1), U(-1, 1) for a
+        uniform). The mean sits at z = 0, except for a lognormal: its mean value
+        exp(sigma_ln^2 / 2) lies at z = sigma_ln / 2, above the median `value`.
+        """
+        if self.dist == "fixed":
+            return self
+        if mean:
+            return self.at(0.5 * self.dist_params["sigma_ln"] if self.dist == "lognormal" else 0.0)
+        return self.at(rng.uniform(-1.0, 1.0) if self.dist == "uniform" else rng.standard_normal())
+
+    def at(self, z: float) -> "Param":
+        """The same Param at a prior-width coordinate z: value + sigma z (normal),
+        value exp(sigma_ln z) (lognormal), value + half_width z (uniform, inside for |z| <= 1).
+        z = 0 is the card value; fixed ignores z. The particle filter moves in z.
+        """
+        p = self.dist_params
+        if self.dist == "normal":
+            value = self.value + p["sigma"] * z
+        elif self.dist == "lognormal":
+            value = self.value * math.exp(p["sigma_ln"] * z)
+        elif self.dist == "uniform":
+            value = self.value + p["half_width"] * z
+        else:
+            value = self.value
+        return Param(value=value, dist=self.dist, dist_params=p)
+
+
+class Card(BaseModel):
+    """Base of every card and block: frozen, no unknown fields, able to redraw its uncertain values."""
+
+    model_config = _CFG
+
+    def draw(self, rng=None, only: set[str] | None = None, mean: bool = False) -> "Card":
+        """This card with its uncertain Params redrawn, or put at their mean.
+
+        `only` names the fields to redraw; every other Param keeps its card value. The card is
+        rebuilt through its constructor, so a value outside the physical support raises
+        ValueError. The mean card is not the mean prediction: the model is nonlinear.
+        """
+        return self.replace({name: p.draw(rng, mean) for name, p in self.uncertain().items()
+                             if only is None or name in only})
+
+    def at(self, z: dict[str, float]) -> "Card":
+        """This card with the named uncertain Params at prior-width coordinates z (see Param.at)."""
+        return self.replace({name: p.at(z[name]) for name, p in self.uncertain().items() if name in z})
+
+    def replace(self, params: dict[str, Param]) -> "Card":
+        """This card with the named Params replaced, nested blocks included; validators rerun."""
+        def put(value, name):
+            if isinstance(value, Param):
+                return params.get(name, value)
+            if isinstance(value, Card):
+                return value.replace(params)
+            return value
+        return type(self)(**{name: put(getattr(self, name), name) for name in type(self).model_fields})
+
+    def uncertain(self) -> dict[str, Param]:
+        """The Params that carry a distribution, by field name, nested blocks included."""
+        found = {}
+        for name in type(self).model_fields:
+            value = getattr(self, name)
+            if isinstance(value, Param) and value.dist != "fixed":
+                found[name] = value
+            elif isinstance(value, Card):
+                found.update(value.uncertain())
+        return found
+
 
 # ---------------------------------------------------------------- constraints
 
@@ -94,7 +172,7 @@ def _finite(name: str):
 
 # ------------------------------------------------------------------ material
 
-class IonicBlock(BaseModel):
+class IonicBlock(Card):
     """One dominant mobile ionic species. Present only when data exist."""
 
     model_config = _CFG
@@ -120,7 +198,7 @@ class IonicBlock(BaseModel):
         return self
 
 
-class PiezoBlock(BaseModel):
+class PiezoBlock(Card):
     """Bulk incremental piezoelectric coefficients, polar axis along z.
 
     d_15 uses the engineering convention (twice the full-tensor shear entry).
@@ -133,7 +211,7 @@ class PiezoBlock(BaseModel):
     d_15: Param                                          # m/V
 
 
-class ElectrostrictionBlock(BaseModel):
+class ElectrostrictionBlock(Card):
     """Isotropic strain-based electrostriction and spontaneous polarization.
 
     Q is the bare strain coefficient for the total polarization; it excludes
@@ -147,7 +225,7 @@ class ElectrostrictionBlock(BaseModel):
     P_0: Param                                           # C/m^2
 
 
-class MaterialCard(BaseModel):
+class MaterialCard(Card):
     """What the material contributes. Required: dielectric and elastic data."""
 
     model_config = _CFG
@@ -170,7 +248,7 @@ class MaterialCard(BaseModel):
 
 # ---------------------------------------------------------------- experiment
 
-class ExperimentCard(BaseModel):
+class ExperimentCard(Card):
     """Control settings of one sinusoidal measurement. Plain numbers."""
 
     model_config = _CFG
@@ -187,7 +265,7 @@ class ExperimentCard(BaseModel):
         return 2.0 * math.pi * self.frequency_hz
 
 
-class PulseCard(BaseModel):
+class PulseCard(Card):
     """DC history before one readout: a pulse, then a delay. Plain numbers. Optional.
 
     Read by a material_state step, never by a mechanism. On-field readout is
@@ -205,7 +283,7 @@ class PulseCard(BaseModel):
 
 # ---------------------------------------------------------------- instrument
 
-class InstrumentCard(BaseModel):
+class InstrumentCard(Card):
     """Tip, cantilever and detection. Calibration multipliers default to 1."""
 
     model_config = _CFG
@@ -239,7 +317,7 @@ class InstrumentCard(BaseModel):
 
 # ------------------------------------------------------------------ junction
 
-class JunctionCard(BaseModel):
+class JunctionCard(Card):
     """What sits between tip and sample. Defaults are assumptions, not data."""
 
     model_config = _CFG

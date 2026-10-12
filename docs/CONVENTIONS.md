@@ -15,6 +15,8 @@ share every row.
 | Voltage driving the electrostatic force | the applied V_ac and U_dc, not V_j | the force acts across the whole junction |
 | DC offset | U_dc = V_dc minus V_cpd, for every mechanism | one definition; CPD is a junction-card value, default zero is an assumption |
 | Reference bias of the ionic state | U_ref = `ionic.reference_bias_v`; 0 for an untouched card | written by a `material_state` step; only Vegard's bias check uses U_dc minus U_ref, every other use of U_dc is unchanged |
+| Uncertainty | every Param with a distribution is uncertain; control settings (experiment, pulse) are exact | independent marginals; a draw outside a card's support is dropped and counted, never clipped |
+| Inference | particle filter over the uncertain card values in prior-width coordinates; the likelihood is Gaussian on ln|1w| | an unsupported prediction has likelihood zero; the posterior is written back as cards, and the correlations they cannot hold are returned beside them |
 | Ion density in the linear response | N_r = N (1 minus N / N_site), N without a site density | ideal lattice gas, from `scales.responsive_density`; sets R_D for every mechanism and the Vegard prefactor |
 | Readout of displacements | disk centre, free surface, outward positive | constant `READOUT_DISPLACEMENT` in `report.py` |
 | Readout of forces | net vertical force on the tip apex, outward positive | attraction is negative |
@@ -58,6 +60,9 @@ far outside range that the formula no longer applies.
 - **State steps.** A `material_state` step runs before the mechanisms. It
   returns a new material card and a `StateReport`. The detector inherits the
   state's status, so a signal is never better than the state it was measured on.
+- **Omitted versus refused.** A mechanism without data (no block on the card)
+  is omitted, and the detector sums the rest. A mechanism with data that its
+  own checks refused still applies, so the detector refuses to sum without it.
 - **Vegard and the layer.** V_j already contains the divider; no second
   division inside the formula.
 - **Fields.** The Vegard field is screened by the ions; the electromechanical
